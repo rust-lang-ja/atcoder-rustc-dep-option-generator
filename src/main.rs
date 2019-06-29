@@ -25,7 +25,7 @@ fn load_manifest(cargo_toml_path: &Path) -> Result<Manifest> {
 }
 
 struct Dependency {
-    package_name: String,
+    crate_name: String,
     library_path: PathBuf,
 }
 
@@ -66,10 +66,11 @@ impl Dependency {
             None => Dependency::parse_normal(package_name.clone(), dep.version_req().to_string()),
         }?;
 
+        let crate_name = locator.crate_name();
         let library_path = locator.find_library_path(deps_path)?;
 
         Ok(Dependency {
-            package_name,
+            crate_name,
             library_path,
         })
     }
@@ -77,7 +78,7 @@ impl Dependency {
     pub fn make_compile_option(&self) -> impl Iterator<Item = String> {
         vec![
             "--extern".to_string(),
-            format!("{}={}", self.package_name, self.library_path.display()),
+            format!("{}={}", self.crate_name, self.library_path.display()),
         ]
         .into_iter()
     }
