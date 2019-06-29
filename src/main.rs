@@ -159,9 +159,21 @@ impl Locator {
             let path = to_absolute::to_absolute_from_current_dir(file.path())?;
             let content = fs::read_to_string(&path)?;
             if self.matches(content) {
-                return Ok(path
-                    .with_file_name(format!("lib{}", file_name))
-                    .with_extension("rlib"));
+                let stem = path.with_file_name(format!("lib{}", file_name));
+
+                // proc_macro
+                let so = stem.with_extension("so");
+                if so.exists() {
+                    return Ok(so);
+                }
+
+                // any other normal crates
+                let rlib = stem.with_extension("rlib");
+                if rlib.exists() {
+                    return Ok(rlib);
+                }
+
+                unreachable!("The compiled crate must be either '.rlib' or '.so'.");
             }
         }
 
