@@ -153,7 +153,7 @@ impl Locator {
             let file_name = file_name
                 .to_str()
                 .ok_or("file_name has invalid byte for UTF-8")?;
-            if !file_name.starts_with(&crate_name) {
+            if !(file_name.starts_with(&format!("{}-", crate_name)) && file_name.ends_with(".d")) {
                 continue;
             }
 
