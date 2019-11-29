@@ -1,26 +1,10 @@
-use cargo::core::manifest::{EitherManifest, Manifest};
 use cargo::core::shell::Shell;
-use cargo::core::{Dependency as CargoDependency, GitReference, SourceId};
+use cargo::core::{Dependency as CargoDependency, GitReference, Workspace};
 use cargo::util::config::Config;
-use cargo::util::toml::read_manifest;
 use failure::{format_err, Fallible};
 use std::fs;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
-
-fn load_manifest(cargo_toml_path: &Path) -> Fallible<Manifest> {
-    let abs_path = &to_absolute::to_absolute_from_current_dir(".")?;
-    let source_id = SourceId::for_directory(abs_path)?;
-    let abs_cargo_toml_path = &to_absolute::to_absolute_from_current_dir(cargo_toml_path)?;
-    let config = Config::default()?;
-
-    let (manifest, _) = read_manifest(abs_cargo_toml_path, source_id, &config)?;
-
-    match manifest {
-        EitherManifest::Virtual(_) => Err(failure::err_msg("virtual manifest is not supported.")),
-        EitherManifest::Real(m) => Ok(m),
-    }
-}
 
 struct Dependency {
     crate_name: String,
@@ -188,26 +172,25 @@ impl Locator {
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
 struct Opt {
-    cargo_toml_path: PathBuf,
-    deps_path: PathBuf,
+    #[structopt(long, value_name("PATH"), help("Path to Cargo.toml"))]
+    manifest_path: Option<PathBuf>,
 }
 
-fn run(
-    Opt {
-        cargo_toml_path,
-        deps_path,
-    }: Opt,
-) -> Fallible<()> {
-    // read the manifest
-    let manifest = load_manifest(&cargo_toml_path)?;
+fn run(Opt { manifest_path }: Opt) -> Fallible<()> {
+    let config = Config::default()?;
 
-    // path for `*/target/release/deps`
-    let deps_path = to_absolute::to_absolute_from_current_dir(deps_path)?;
+    let manifest_path = manifest_path
+        .map(Ok)
+        .unwrap_or_else(|| cargo::util::important_paths::find_root_manifest_for_wd(config.cwd()))?;
+    let ws = Workspace::new(&manifest_path, &config)?;
 
-    let options = manifest
+    let current = ws.current()?;
+    let deps_path = ws.target_dir().join("release").join("deps");
+
+    let options = current
         .dependencies()
         .iter()
-        .map(|dep| Dependency::parse(&deps_path, dep))
+        .map(|dep| Dependency::parse(deps_path.as_path_unlocked(), dep))
         .collect::<Fallible<Vec<_>>>()?
         .into_iter()
         .flat_map(|dep| dep.make_compile_option())
