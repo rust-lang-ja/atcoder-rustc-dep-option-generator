@@ -2,24 +2,20 @@ use cargo::core::manifest::{EitherManifest, Manifest};
 use cargo::core::{Dependency as CargoDependency, GitReference, SourceId};
 use cargo::util::config::Config;
 use cargo::util::toml::read_manifest;
-use std::env;
-use std::error::Error;
-use std::fs;
+use failure::{format_err, Fallible};
 use std::path::{Path, PathBuf};
+use std::{env, fs};
 
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
-
-fn load_manifest(cargo_toml_path: &Path) -> Result<Manifest> {
+fn load_manifest(cargo_toml_path: &Path) -> Fallible<Manifest> {
     let abs_path = &to_absolute::to_absolute_from_current_dir(".")?;
     let source_id = SourceId::for_directory(abs_path)?;
     let abs_cargo_toml_path = &to_absolute::to_absolute_from_current_dir(cargo_toml_path)?;
     let config = Config::default()?;
 
-    let (manifest, _) = read_manifest(abs_cargo_toml_path, source_id, &config)
-        .map_err(|e| failure::Error::from(e).compat())?;
+    let (manifest, _) = read_manifest(abs_cargo_toml_path, source_id, &config)?;
 
     match manifest {
-        EitherManifest::Virtual(_) => Err("virtual manifest is not supported.".into()),
+        EitherManifest::Virtual(_) => Err(failure::err_msg("virtual manifest is not supported.")),
         EitherManifest::Real(m) => Ok(m),
     }
 }
@@ -30,7 +26,7 @@ struct Dependency {
 }
 
 impl Dependency {
-    fn parse_git(package_name: String, git_ref: &GitReference) -> Result<Locator> {
+    fn parse_git(package_name: String, git_ref: &GitReference) -> Fallible<Locator> {
         match git_ref {
             GitReference::Rev(revision) => Ok(Locator::Git {
                 package_name,
@@ -41,9 +37,11 @@ impl Dependency {
         }
     }
 
-    fn parse_normal(package_name: String, version_req: String) -> Result<Locator> {
+    fn parse_normal(package_name: String, version_req: String) -> Fallible<Locator> {
         if !version_req.starts_with('=') {
-            return Err("use exact match version requirement: `= *.*.*`".into());
+            return Err(failure::err_msg(
+                "use exact match version requirement: `= *.*.*`",
+            ));
         }
 
         let version = version_req[1..].trim().to_string();
@@ -54,9 +52,9 @@ impl Dependency {
         })
     }
 
-    pub fn parse(deps_path: &Path, dep: &CargoDependency) -> Result<Dependency> {
+    pub fn parse(deps_path: &Path, dep: &CargoDependency) -> Fallible<Dependency> {
         if !deps_path.exists() {
-            return Err("dependencies path is not exist.".into());
+            return Err(failure::err_msg("dependencies path is not exist."));
         }
 
         let package_name = dep.package_name().to_string();
@@ -141,7 +139,7 @@ impl Locator {
             .all(|pat| content.contains(pat))
     }
 
-    fn find_library_path(&self, deps_path: &Path) -> Result<PathBuf> {
+    fn find_library_path(&self, deps_path: &Path) -> Fallible<PathBuf> {
         let crate_name = self.crate_name();
         for file in deps_path.read_dir()? {
             let file = file?;
@@ -152,7 +150,7 @@ impl Locator {
             let file_name = file.file_name();
             let file_name = file_name
                 .to_str()
-                .ok_or("file_name has invalid byte for UTF-8")?;
+                .ok_or_else(|| failure::err_msg("file_name has invalid byte for UTF-8"))?;
             if !(file_name.starts_with(&format!("{}-", crate_name)) && file_name.ends_with(".d")) {
                 continue;
             }
@@ -178,17 +176,20 @@ impl Locator {
             }
         }
 
-        Err(format!(
+        Err(format_err!(
             "failed to find appropriate path for {}",
             self.package_name()
-        )
-        .into())
+        ))
     }
 }
 
-fn main() -> Result<()> {
-    let cargo_toml_path = env::args().nth(1).ok_or("please specify cargo.toml path")?;
-    let deps_path = env::args().nth(2).ok_or("please specify deps path")?;
+fn main() -> Fallible<()> {
+    let cargo_toml_path = env::args()
+        .nth(1)
+        .ok_or_else(|| failure::err_msg("please specify cargo.toml path"))?;
+    let deps_path = env::args()
+        .nth(2)
+        .ok_or_else(|| failure::err_msg("please specify deps path"))?;
 
     // read the manifest
     let cargo_toml_path = PathBuf::from(cargo_toml_path);
@@ -201,7 +202,7 @@ fn main() -> Result<()> {
         .dependencies()
         .iter()
         .map(|dep| Dependency::parse(&deps_path, dep))
-        .collect::<Result<Vec<_>>>()?
+        .collect::<Fallible<Vec<_>>>()?
         .into_iter()
         .flat_map(|dep| dep.make_compile_option())
         .collect::<Vec<_>>()
