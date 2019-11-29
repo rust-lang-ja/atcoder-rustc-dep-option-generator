@@ -1,4 +1,5 @@
 use cargo::core::manifest::{EitherManifest, Manifest};
+use cargo::core::shell::Shell;
 use cargo::core::{Dependency as CargoDependency, GitReference, SourceId};
 use cargo::util::config::Config;
 use cargo::util::toml::read_manifest;
@@ -183,7 +184,7 @@ impl Locator {
     }
 }
 
-fn main() -> Fallible<()> {
+fn run() -> Fallible<()> {
     let cargo_toml_path = env::args()
         .nth(1)
         .ok_or_else(|| failure::err_msg("please specify cargo.toml path"))?;
@@ -211,4 +212,10 @@ fn main() -> Fallible<()> {
     println!("{} -L dependency={}", options, deps_path.display());
 
     Ok(())
+}
+
+fn main() {
+    if let Err(err) = run() {
+        cargo::exit_with_error(err.into(), &mut Shell::new());
+    }
 }
