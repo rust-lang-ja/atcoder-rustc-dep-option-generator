@@ -4,8 +4,9 @@ use cargo::core::{Dependency as CargoDependency, GitReference, SourceId};
 use cargo::util::config::Config;
 use cargo::util::toml::read_manifest;
 use failure::{format_err, Fallible};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::{env, fs};
+use structopt::StructOpt;
 
 fn load_manifest(cargo_toml_path: &Path) -> Fallible<Manifest> {
     let abs_path = &to_absolute::to_absolute_from_current_dir(".")?;
@@ -184,20 +185,24 @@ impl Locator {
     }
 }
 
-fn run() -> Fallible<()> {
-    let cargo_toml_path = env::args()
-        .nth(1)
-        .ok_or_else(|| failure::err_msg("please specify cargo.toml path"))?;
-    let deps_path = env::args()
-        .nth(2)
-        .ok_or_else(|| failure::err_msg("please specify deps path"))?;
+#[derive(StructOpt, Debug)]
+#[structopt(author, about)]
+struct Opt {
+    cargo_toml_path: PathBuf,
+    deps_path: PathBuf,
+}
 
+fn run(
+    Opt {
+        cargo_toml_path,
+        deps_path,
+    }: Opt,
+) -> Fallible<()> {
     // read the manifest
-    let cargo_toml_path = PathBuf::from(cargo_toml_path);
     let manifest = load_manifest(&cargo_toml_path)?;
 
     // path for `*/target/release/deps`
-    let deps_path = to_absolute::to_absolute_from_current_dir(PathBuf::from(deps_path))?;
+    let deps_path = to_absolute::to_absolute_from_current_dir(deps_path)?;
 
     let options = manifest
         .dependencies()
@@ -215,7 +220,7 @@ fn run() -> Fallible<()> {
 }
 
 fn main() {
-    if let Err(err) = run() {
+    if let Err(err) = run(Opt::from_args()) {
         cargo::exit_with_error(err.into(), &mut Shell::new());
     }
 }
