@@ -1,6 +1,6 @@
 [package]
 name = "rustc-dep-option-generator"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["rust-lang-ja Developers"]
 edition = "2018"
 description = "A program to generate Rust compiler options to locate prebuilt crates."
