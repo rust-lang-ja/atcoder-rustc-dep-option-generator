@@ -10,5 +10,7 @@ description = "A program to generate Rust compiler options to locate prebuilt cr
 [dependencies]
 cargo = "0.38.0"
 failure = "0.1.6"
+shell-escape = "0.1.4"
 structopt = "0.3.5"
 to_absolute = "0.1.0"
+itertools = "0.8.2"

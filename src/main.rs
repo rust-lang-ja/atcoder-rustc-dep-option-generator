@@ -2,6 +2,7 @@ use cargo::core::shell::Shell;
 use cargo::core::{Dependency as CargoDependency, GitReference, Workspace};
 use cargo::util::config::Config;
 use failure::{format_err, Fallible};
+use itertools::Itertools as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
@@ -187,18 +188,25 @@ fn run(Opt { manifest_path }: Opt) -> Fallible<()> {
     let current = ws.current()?;
     let deps_path = ws.target_dir().join("release").join("deps");
 
-    let options = current
+    let mut options = current
         .dependencies()
         .iter()
         .map(|dep| Dependency::parse(deps_path.as_path_unlocked(), dep))
         .collect::<Fallible<Vec<_>>>()?
         .into_iter()
         .flat_map(|dep| dep.make_compile_option())
-        .collect::<Vec<_>>()
-        .join(" ");
+        .collect::<Vec<_>>();
+    options.push("-L".to_owned());
+    options.push(format!("dependency={}", deps_path.display()));
 
-    println!("{} -L dependency={}", options, deps_path.display());
-
+    println!(
+        "{}",
+        options
+            .into_iter()
+            .map(Into::into)
+            .map(shell_escape::unix::escape)
+            .join(" "),
+    );
     Ok(())
 }
 
