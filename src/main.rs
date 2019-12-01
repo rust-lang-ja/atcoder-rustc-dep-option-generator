@@ -1,28 +1,13 @@
-use cargo::core::manifest::{EitherManifest, Manifest};
-use cargo::core::{Dependency as CargoDependency, GitReference, SourceId};
+use cargo::core::shell::Shell;
+use cargo::core::{Dependency as CargoDependency, GitReference, Workspace};
 use cargo::util::config::Config;
-use cargo::util::toml::read_manifest;
-use std::env;
-use std::error::Error;
+use failure::{format_err, Fallible};
+use itertools::Itertools as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
-
-fn load_manifest(cargo_toml_path: &Path) -> Result<Manifest> {
-    let abs_path = &to_absolute::to_absolute_from_current_dir(".")?;
-    let source_id = SourceId::for_directory(abs_path)?;
-    let abs_cargo_toml_path = &to_absolute::to_absolute_from_current_dir(cargo_toml_path)?;
-    let config = Config::default()?;
-
-    let (manifest, _) = read_manifest(abs_cargo_toml_path, source_id, &config)
-        .map_err(|e| failure::Error::from(e).compat())?;
-
-    match manifest {
-        EitherManifest::Virtual(_) => Err("virtual manifest is not supported.".into()),
-        EitherManifest::Real(m) => Ok(m),
-    }
-}
+use structopt::clap::AppSettings;
+use structopt::StructOpt;
+use strum::{EnumString, EnumVariantNames};
 
 struct Dependency {
     crate_name: String,
@@ -30,7 +15,7 @@ struct Dependency {
 }
 
 impl Dependency {
-    fn parse_git(package_name: String, git_ref: &GitReference) -> Result<Locator> {
+    fn parse_git(package_name: String, git_ref: &GitReference) -> Fallible<Locator> {
         match git_ref {
             GitReference::Rev(revision) => Ok(Locator::Git {
                 package_name,
@@ -41,9 +26,11 @@ impl Dependency {
         }
     }
 
-    fn parse_normal(package_name: String, version_req: String) -> Result<Locator> {
+    fn parse_normal(package_name: String, version_req: String) -> Fallible<Locator> {
         if !version_req.starts_with('=') {
-            return Err("use exact match version requirement: `= *.*.*`".into());
+            return Err(failure::err_msg(
+                "use exact match version requirement: `= *.*.*`",
+            ));
         }
 
         let version = version_req[1..].trim().to_string();
@@ -54,9 +41,12 @@ impl Dependency {
         })
     }
 
-    pub fn parse(deps_path: &Path, dep: &CargoDependency) -> Result<Dependency> {
+    pub fn parse(deps_path: &Path, dep: &CargoDependency) -> Fallible<Dependency> {
         if !deps_path.exists() {
-            return Err("dependencies path is not exist.".into());
+            return Err(format_err!(
+                "{} does not exist. did you run `cargo build --release`?",
+                deps_path.display(),
+            ));
         }
 
         let package_name = dep.package_name().to_string();
@@ -141,7 +131,7 @@ impl Locator {
             .all(|pat| content.contains(pat))
     }
 
-    fn find_library_path(&self, deps_path: &Path) -> Result<PathBuf> {
+    fn find_library_path(&self, deps_path: &Path) -> Fallible<PathBuf> {
         let crate_name = self.crate_name();
         for file in deps_path.read_dir()? {
             let file = file?;
@@ -152,7 +142,7 @@ impl Locator {
             let file_name = file.file_name();
             let file_name = file_name
                 .to_str()
-                .ok_or("file_name has invalid byte for UTF-8")?;
+                .ok_or_else(|| failure::err_msg("file_name has invalid byte for UTF-8"))?;
             if !(file_name.starts_with(&format!("{}-", crate_name)) && file_name.ends_with(".d")) {
                 continue;
             }
@@ -178,36 +168,78 @@ impl Locator {
             }
         }
 
-        Err(format!(
+        Err(format_err!(
             "failed to find appropriate path for {}",
             self.package_name()
-        )
-        .into())
+        ))
     }
 }
 
-fn main() -> Result<()> {
-    let cargo_toml_path = env::args().nth(1).ok_or("please specify cargo.toml path")?;
-    let deps_path = env::args().nth(2).ok_or("please specify deps path")?;
+#[derive(StructOpt, Debug)]
+#[structopt(author, about, setting(AppSettings::DeriveDisplayOrder))]
+struct Opt {
+    #[structopt(long, value_name("PATH"), help("Path to Cargo.toml"))]
+    manifest_path: Option<PathBuf>,
+    #[structopt(
+        long,
+        value_name("FORMAT"),
+        default_value("shell"),
+        possible_values(&OutputFormat::variants()),
+        help("Output format")
+    )]
+    format: OutputFormat,
+}
 
-    // read the manifest
-    let cargo_toml_path = PathBuf::from(cargo_toml_path);
-    let manifest = load_manifest(&cargo_toml_path)?;
+#[derive(EnumString, EnumVariantNames, Debug)]
+#[strum(serialize_all = "kebab_case")]
+enum OutputFormat {
+    Shell,
+    Json,
+}
 
-    // path for `*/target/release/deps`
-    let deps_path = to_absolute::to_absolute_from_current_dir(PathBuf::from(deps_path))?;
+fn run(
+    Opt {
+        manifest_path,
+        format,
+    }: Opt,
+) -> Fallible<()> {
+    let config = Config::default()?;
 
-    let options = manifest
+    let manifest_path = manifest_path
+        .map(Ok)
+        .unwrap_or_else(|| cargo::util::important_paths::find_root_manifest_for_wd(config.cwd()))?;
+    let ws = Workspace::new(&manifest_path, &config)?;
+
+    let current = ws.current()?;
+    let deps_path = ws.target_dir().join("release").join("deps");
+
+    let mut options = current
         .dependencies()
         .iter()
-        .map(|dep| Dependency::parse(&deps_path, dep))
-        .collect::<Result<Vec<_>>>()?
+        .map(|dep| Dependency::parse(deps_path.as_path_unlocked(), dep))
+        .collect::<Fallible<Vec<_>>>()?
         .into_iter()
         .flat_map(|dep| dep.make_compile_option())
-        .collect::<Vec<_>>()
-        .join(" ");
+        .collect::<Vec<_>>();
+    options.push("-L".to_owned());
+    options.push(format!("dependency={}", deps_path.display()));
 
-    println!("{} -L dependency={}", options, deps_path.display());
-
+    println!(
+        "{}",
+        match format {
+            OutputFormat::Shell => options
+                .into_iter()
+                .map(Into::into)
+                .map(shell_escape::unix::escape)
+                .join(" "),
+            OutputFormat::Json => miniserde::json::to_string(&options),
+        }
+    );
     Ok(())
+}
+
+fn main() {
+    if let Err(err) = run(Opt::from_args()) {
+        cargo::exit_with_error(err.into(), &mut Shell::new());
+    }
 }
