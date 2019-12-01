@@ -43,7 +43,10 @@ impl Dependency {
 
     pub fn parse(deps_path: &Path, dep: &CargoDependency) -> Fallible<Dependency> {
         if !deps_path.exists() {
-            return Err(failure::err_msg("dependencies path is not exist."));
+            return Err(format_err!(
+                "{} does not exist. did you run `cargo build --release`?",
+                deps_path.display(),
+            ));
         }
 
         let package_name = dep.package_name().to_string();
