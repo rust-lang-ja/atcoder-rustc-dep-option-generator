@@ -5,7 +5,9 @@ use failure::{format_err, Fallible};
 use itertools::Itertools as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+use structopt::clap::AppSettings;
 use structopt::StructOpt;
+use strum::{EnumString, EnumVariantNames};
 
 struct Dependency {
     crate_name: String,
@@ -171,13 +173,33 @@ impl Locator {
 }
 
 #[derive(StructOpt, Debug)]
-#[structopt(author, about)]
+#[structopt(author, about, setting(AppSettings::DeriveDisplayOrder))]
 struct Opt {
     #[structopt(long, value_name("PATH"), help("Path to Cargo.toml"))]
     manifest_path: Option<PathBuf>,
+    #[structopt(
+        long,
+        value_name("FORMAT"),
+        default_value("shell"),
+        possible_values(&OutputFormat::variants()),
+        help("Output format")
+    )]
+    format: OutputFormat,
 }
 
-fn run(Opt { manifest_path }: Opt) -> Fallible<()> {
+#[derive(EnumString, EnumVariantNames, Debug)]
+#[strum(serialize_all = "kebab_case")]
+enum OutputFormat {
+    Shell,
+    Json,
+}
+
+fn run(
+    Opt {
+        manifest_path,
+        format,
+    }: Opt,
+) -> Fallible<()> {
     let config = Config::default()?;
 
     let manifest_path = manifest_path
@@ -201,11 +223,14 @@ fn run(Opt { manifest_path }: Opt) -> Fallible<()> {
 
     println!(
         "{}",
-        options
-            .into_iter()
-            .map(Into::into)
-            .map(shell_escape::unix::escape)
-            .join(" "),
+        match format {
+            OutputFormat::Shell => options
+                .into_iter()
+                .map(Into::into)
+                .map(shell_escape::unix::escape)
+                .join(" "),
+            OutputFormat::Json => miniserde::json::to_string(&options),
+        }
     );
     Ok(())
 }
